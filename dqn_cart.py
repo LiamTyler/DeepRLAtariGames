@@ -13,10 +13,32 @@ epsilon_min = 0.01
 epsilon_decay_rate = 0.995
 LEARNING_RATE = 0.001
 BATCH_SIZE = 32
-NUM_EPISODES = 1000
+NUM_EPISODES = 5000
 MAX_FRAMES_PLAYED = 500
 ACTION_SIZE = 2 # Cartpole specific: can move cart left or right
 STATE_SIZE = 4 # Cartpole specific: state = [cart pos, cart vel, pole angle, pole tip vel]
+
+evals = []
+
+def evaluate(model, games=100):
+    env = gym.make('CartPole-v1')
+    total_score = 0
+    for episode in range(games):
+        state = env.reset()
+        state = np.reshape(state, [1, STATE_SIZE])
+        score = 0
+        done = False
+        while not done:
+            action = np.argmax(model.predict(state)[0])
+
+            new_state, reward, done, info = env.step(action)
+
+            score += reward
+            state = new_state
+            state = np.reshape(state, [1, STATE_SIZE])
+
+        total_score += score
+    return total_score / games
 
 model = Sequential()
 
@@ -44,7 +66,7 @@ for episode in range(NUM_EPISODES):
         if random.random() < epsilon:
             action = env.action_space.sample()
         else:
-            predicted_reward = model.predict(state)MAX_FRAMES_PLAYED
+            predicted_reward = model.predict(state)
             action = np.argmax(predicted_reward[0]) # choose action with highest predicted reward
 
         # Update game with selected action
@@ -59,7 +81,11 @@ for episode in range(NUM_EPISODES):
 
         # if gameover, then stop and go to next game
         if done:
-            print("episode:", episode, ", score =", t)
+            if (episode + 1) % 100 == 0:
+                print("episode:", episode)
+                #evals.append(evaluate(model))
+                #print("game: ", episode + 1, ", eval:", evals[-1])
+            #print("episode:", episode, ", score =", t)
             break
 
     # now do the training on a random batch of recorded states (if enough memory has been saved)
@@ -94,4 +120,11 @@ for episode in range(NUM_EPISODES):
     loss = hist.history['loss'][0]
     epsilon = max(epsilon_min, epsilon * epsilon_decay_rate)
     
-model.save_weights('cartpole-dqn-1000eps.h5')
+#model.save_weights('cartpole-dqn-1000eps.h5')
+fname = "dqn_cartv1-" + str(GAMMA) + str(epsilon_min) + str(epsilon_decay_rate) + str(LEARNING_RATE) + str(BATCH_SIZE) + ".txt"
+final = evaluate(model, 1000)
+print(fname, ":", final)
+f = open(fname, "w")
+f.write(str(evals) + "\n" + str(final))
+f.close()
+
