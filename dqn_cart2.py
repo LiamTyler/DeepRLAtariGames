@@ -48,19 +48,48 @@ class CartPoleDQN:
         if random.random() < self.epsilon:
             return self.env.action_space.sample()
         else:
-            predictedQ = model.predict(state)
-            return np.argmax(predicteQ[0])
+            predictedQ = self.model.predict(state)
+            return np.argmax(predictedQ[0])
 
+    def experienceReplay(self):
+        # sample random batch from replay memory
+        if len(self.replayMemory) < self.BATCH_SIZE:
+            return
+        batch = random.sample(self.replayMemory, self.BATCH_SIZE)
+        
+        # Preprocess states from batch
+        states, targets = [], []
+        for state, action, reward, new_state, done in batch:
+            target = reward
+            if not done:
+                target += self.GAMMA * np.amax(self.model.predict(new_state)[0])
+
+            # Approximately map current Q to new Q
+            currentQs = self.model.predict(state)
+            currentQs[0][action] = target
+
+            states.append(state[0])
+            targets.append(currentQs[0])
+
+            #self.model.fit(state, currentQs, epochs=1, verbose=0)
+
+        # update network and epsilon
+        history = self.model.fit(np.array(states), np.array(targets), epochs=1, verbose=0)
+        self.epsilon = max(self.MIN_EPSILON, self.epsilon * self.EPSILON_DECAY_RATE)
+        
     def train(self, numEpisodes=None, render=False):
         if numEpisodes == None:
             numEpisodes = self.NUM_EPISODES
-            
+
+        averageScore = 0
+        
         for episode in range(numEpisodes):
             state = self.env.reset()
             state = np.reshape(state, [1, self.STATE_SIZE])
             score = 0
             
-            for timeStep in range(self.MAX_TIME_STEPS):
+            #for timeStep in range(self.MAX_TIME_STEPS):
+            while True:
                 if render:
                     self.env.render()
                 
@@ -70,6 +99,8 @@ class CartPoleDQN:
                 # execute that action
                 new_state, reward, done, info = self.env.step(action)
                 new_state = np.reshape(new_state, [1, self.STATE_SIZE])
+                if done:
+                    reward = -reward
 
                 # store experience in replay memory
                 self.replayMemory.append((state, action, reward, new_state, done))
@@ -78,33 +109,14 @@ class CartPoleDQN:
                 score += reward
                 state = new_state
                 if done:
-                    #print("Episode:", episode, " ended with score:", score)
+                    averageScore += score
+                    print("Episode:", episode, " exploration =", self.epsilon, ", score:", score)
                     break
                 
-            # sample random batch from replay memory
-            if len(self.replayMemory) < self.BATCH_SIZE:
-                continue
-            batch = random.sample(self.replayMemory, self.BATCH_SIZE)
-            
-            # Preprocess states from batch
-            states, targets = [], []
-            for state, action, reward, new_state, done in batch:
-                target = reward
-                if not done:
-                    target += self.GAMMA * np.max(self.model.predict(new_state)[0])
+                self.experienceReplay()
 
-                # Approximately map current Q to new Q
-                currentQs = self.model.predict(state)
-                currentQs[0][action] = target
-
-                states.append(state[0])
-                targets.append(currentQs[0])
-
-            # update network and epsilon
-            history = self.model.fit(np.array(states), np.array(targets), epochs=1, verbose=0)
-            loss = history.history['loss'][0]
-            epsilon = max(self.MIN_EPSILON, self.epsilon * self.EPSILON_DECAY_RATE)
-
+        return averageScore / numEpisodes
+    
     def save(self, path):
         self.model.save(path)
 
@@ -138,40 +150,23 @@ class CartPoleDQN:
             total_score += score
         return total_score / games
 
-#for lr in [0.0005, 0.001, 0.005]:
-#    for gamma in [.9, .95, .99]:
-#        for min_epsilon in [.001, .01, .1]:
-#            for decay in [.9, .97, .995]:
-#                for bs in [32, 64]:
-for lr in [0.001]:
-    for gamma in [.95]:
-        for min_epsilon in [.01]:
-            for decay in [.995]:
-                for bs in [32]:
-                    params = DQNParameters()
-                    params.learning_rate = lr
-                    params.gamma = gamma
-                    params.max_time_steps = 500
-                    params.min_epsilon = min_epsilon
-                    params.epsilon_decay_rate = decay
-                    params.batch_size = bs
-                    
-                    dqn = CartPoleDQN(params)
-                    evals = []
-                    games = []
-                    for i in range(1, 51):
-                        dqn.train(100)
-                        #e = dqn.evaluate(100)
-                        #print("Evaluated score after", 100*i, "games:", e)
-                        #evals.append(e)
-                        games.append(100 * i)
+params = DQNParameters()
+params.learning_rate = .001
+params.gamma = .95
+params.max_time_steps = 10**6
+params.min_epsilon = .01
+# params.epsilon_decay_rate = .999997697417558
+params.epsilon_decay_rate = .995
+params.batch_size = 20
+params.replayMemorySize = 1000000
 
-                    final = dqn.evaluate(1000)
-                    print("LR =", lr, ", G =", gamma, ", MIN_E =", min_epsilon, ", decay =", decay, ", bs = ", bs, ":", final)
+dqn = CartPoleDQN(params)
+dqn.train(1000)
+#for i in range(1, 51):
+#    score = dqn.train(100)
+#    print("Average score after", 100 * i, "games =", score)
 
-                    f = open(dqn.getFname(), "w")
-                    f.write(str(evals) + "\n" + str(final))
-                    f.close()
-
+final = dqn.evaluate(100)
+print(final)
 #plt.plot(games, evals)
 #plt.show()
