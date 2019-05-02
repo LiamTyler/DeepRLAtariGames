@@ -32,6 +32,7 @@ class CartPoleDQN:
         self.replayMemory = deque(maxlen=params.replayMemorySize)
         self.BATCH_SIZE = params.batch_size
         self.LEARNING_RATE = params.learning_rate
+        self.scores = []
 
         self.epsilon = 1.0
         self.model = self.buildModel(params.learning_rate)
@@ -110,6 +111,7 @@ class CartPoleDQN:
                 state = new_state
                 if done:
                     averageScore += score
+                    self.scores.append(score)
                     print("Episode:", episode, " exploration =", self.epsilon, ", score:", score)
                     break
                 
@@ -161,7 +163,7 @@ params.batch_size = 20
 params.replayMemorySize = 1000000
 
 dqn = CartPoleDQN(params)
-dqn.train(1000)
+dqn.train(500)
 #for i in range(1, 51):
 #    score = dqn.train(100)
 #    print("Average score after", 100 * i, "games =", score)
