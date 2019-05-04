@@ -192,5 +192,4 @@ network = Network(0.001, env.stateSpaceSize, env.actionSpaceSize)
 agent = Agent(network, replayBuffer)
 
 env.run(agent, 2500)
-env.plot()
 env.save("results/dqn_scores.txt", "results/dqn_scores.png")

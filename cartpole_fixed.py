@@ -196,9 +196,9 @@ class CartPole(Environment):
 
 env = CartPole()
 replayBuffer = UniformReplayBuffer(2000)
-network = Network(0.001, env.stateSpaceSize, env.actionSpaceSize)
-agent = Agent(network, replayBuffer)
+currentNetwork = Network(0.001, env.stateSpaceSize, env.actionSpaceSize)
+targetNetwork = Network(0.001, env.stateSpaceSize, env.actionSpaceSize)
+agent = Agent(currentNetwork, targetNetwork, replayBuffer)
 
 env.run(agent, 2500)
-env.plot()
 env.save("results/dqn_fixed_scores.txt", "results/dqn_fixed_scores.png")
