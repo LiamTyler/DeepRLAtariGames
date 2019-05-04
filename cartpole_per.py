@@ -73,7 +73,7 @@ class SumTree:
 
         return (idx, self.tree[idx], self.data[dataIdx])
 
-class Memory:
+class PERReplayBuffer:
     # hyper parameters from paper
     E = 0.01
     A = 0.6
@@ -172,17 +172,15 @@ class Agent:
 
     def observe(self, state, action, reward, newState, done):
         # calculate new sample error
-        states = np.array(state)
-        newStates = np.array(newStates)
-        currentPredictions = self.currentNetwork.predict(states)
-        newPredictions = self.currentNetwork.predict(newStates)   
+        currentPredictions = self.currentNetwork.predictOne(state)
+        newPredictions = self.currentNetwork.predictOne(newState)   
         target = reward
         if not done:
             target += self.GAMMA * np.amax(newPredictions)
 
         error = abs(currentPredictions[action] - target)
 
-        self.replayBuffer.add((state, action, reward, newState, done), error )
+        self.replayBuffer.add((state, action, reward, newState, done), error)
         self.steps += 1
         self.epsilon = max(self.MIN_EPSILON, self.epsilon * self.EPSILON_DECAY_RATE)
 
@@ -195,18 +193,17 @@ class Agent:
 
         # combine all of the BATCH_SIZE states and new states into two lists
         # to let keras do the predictions in two calls
-        states = np.array([x[0] for x in batch])
-        newStates = np.array([x[3] for x in batch])
+        states = np.array([x[1][0] for x in batch])
+        newStates = np.array([x[1][3] for x in batch])
         currentPredictions = self.currentNetwork.predict(states)
         newPredictions = self.currentNetwork.predict(newStates)
         
         # Create list of xs and ys do train all of the batch items at once
         xs = np.zeros((self.BATCH_SIZE, self.currentNetwork.inputSize))
         ys = np.zeros((self.BATCH_SIZE, self.currentNetwork.outputSize))
-        errors = np.zeros(self.BATCH_SIZE)
 
         for i in range(self.BATCH_SIZE):
-            state, action, reward, newState, done = batch[i]
+            index, (state, action, reward, newState, done) = batch[i]
             target = reward
             if not done:
                 target += self.GAMMA * np.amax(newPredictions[i])
@@ -219,7 +216,8 @@ class Agent:
             ys[i] = currentQs
 
             # get errors for PER
-            errors[i] = abs(oldQ - target)
+            error = abs(oldQ - target)
+            self.replayBuffer.update(index, error)
 
         # update network / fit the model
         self.currentNetwork.train(xs, ys)
@@ -301,5 +299,4 @@ network = Network(0.001, env.stateSpaceSize, env.actionSpaceSize)
 agent = Agent(network, replayBuffer)
 
 env.run(agent, 2500)
-env.plot()
 env.save("results/dqn_per_scores.txt", "results/dqn_per_scores.png")
