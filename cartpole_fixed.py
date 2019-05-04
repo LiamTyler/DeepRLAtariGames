@@ -4,7 +4,7 @@ from keras.layers import *
 from keras.optimizers import Adam
 import random
 import numpy as np
-    import gym
+import gym
 from collections import deque
 import matplotlib.pyplot as plt
 
@@ -60,16 +60,21 @@ class Network:
         self.model = keras.models.load_model(path)
 
 class Agent:
-    def __init__(self, network, buffer, gamma = 0.99, minEpsilon = 0.01, decayRate = .999, batchSize = 64):
+    def __init__(self, currNet, targetNet, buffer, gamma = 0.99, minEpsilon = 0.01, decayRate = .999, batchSize = 64, tau = 1000):
         self.replayBuffer = buffer
         self.GAMMA = gamma
         self.MIN_EPSILON = minEpsilon
         self.EPSILON_DECAY_RATE = decayRate
         self.BATCH_SIZE = batchSize
+        self.TAU = tau
 
-        self.currentNetwork = network
+        self.currentNetwork = currNet
+        self.targetNetwork  = targetNet
         self.steps = 0
         self.epsilon = 1
+
+    def updateTargetModel(self):
+        self.targetNetwork.setWeights(self.currentNetwork)
 
     def selectAction(self, state):
         if random.random() < self.epsilon:
@@ -81,6 +86,9 @@ class Agent:
         self.replayBuffer.add( (states, action, reward, newStates, done) )
         self.steps += 1
         self.epsilon = max(self.MIN_EPSILON, self.epsilon * self.EPSILON_DECAY_RATE)
+
+        if self.steps % self.TAU == 0:
+            self.updateTargetModel()
 
     def experienceReplay(self):
         # sample random batch from replay memory
@@ -94,7 +102,7 @@ class Agent:
         states = np.array([x[0] for x in batch])
         newStates = np.array([x[3] for x in batch])
         currentPredictions = self.currentNetwork.predict(states)
-        newPredictions = self.currentNetwork.predict(newStates)
+        newPredictions = self.targetNetwork.predict(newStates)
         
         # Create list of xs and ys do train all of the batch items at once
         xs = np.zeros((self.BATCH_SIZE, self.currentNetwork.inputSize))
@@ -193,4 +201,4 @@ agent = Agent(network, replayBuffer)
 
 env.run(agent, 2500)
 env.plot()
-env.save("results/dqn_scores.txt", "results/dqn_scores.png")
+env.save("results/dqn_fixed_scores.txt", "results/dqn_fixed_scores.png")

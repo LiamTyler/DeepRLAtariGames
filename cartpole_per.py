@@ -1,12 +1,105 @@
 import keras
 from keras.models import Sequential
-from keras.layers import *
+from keras.layers import Dense, Activation
 from keras.optimizers import Adam
 import random
 import numpy as np
-    import gym
+import math
+import gym
 from collections import deque
 import matplotlib.pyplot as plt
+
+
+# sum tree code from: https://github.com/rlcode/per/blob/master/SumTree.py
+class SumTree:
+    write = 0
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.tree = np.zeros(2 * capacity - 1)
+        self.data = np.zeros(capacity, dtype=object)
+        self.n_entries = 0
+
+    # update to the root node
+    def _propagate(self, idx, change):
+        parent = (idx - 1) // 2
+
+        self.tree[parent] += change
+
+        if parent != 0:
+            self._propagate(parent, change)
+
+    # find sample on leaf node
+    def _retrieve(self, idx, s):
+        left = 2 * idx + 1
+        right = left + 1
+
+        if left >= len(self.tree):
+            return idx
+
+        if s <= self.tree[left]:
+            return self._retrieve(left, s)
+        else:
+            return self._retrieve(right, s - self.tree[left])
+
+    def total(self):
+        return self.tree[0]
+
+    # store priority and sample
+    def add(self, p, data):
+        idx = self.write + self.capacity - 1
+
+        self.data[self.write] = data
+        self.update(idx, p)
+
+        self.write += 1
+        if self.write >= self.capacity:
+            self.write = 0
+
+        if self.n_entries < self.capacity:
+            self.n_entries += 1
+
+    # update priority
+    def update(self, idx, p):
+        change = p - self.tree[idx]
+
+        self.tree[idx] = p
+        self._propagate(idx, change)
+
+    # get priority and sample
+    def get(self, s):
+        idx = self._retrieve(0, s)
+        dataIdx = idx - self.capacity + 1
+
+        return (idx, self.tree[idx], self.data[dataIdx])
+
+class Memory:
+    # hyper parameters from paper
+    E = 0.01
+    A = 0.6
+    def __init__(self, size):
+        self.tree = SumTree(size)
+
+    def size(self):
+        return self.tree.n_entries
+
+    def add(self, data, error):
+        p = math.pow(error + self.E, self.A)
+        self.tree.add(p, data)
+
+    def sample(self, N):
+        batch = []
+        binSize = self.tree.total() / N
+        for i in range(N):
+            s = random.uniform(binSize * i, binSize * (i + 1))
+            (index, p, sarsd) = self.tree.get(s)
+            batch.append((index, sarsd))
+
+        return batch
+
+    def update(self, index, error):
+        p = math.pow(error + self.E, self.A)
+        self.tree.update(index, p)
 
 class UniformReplayBuffer:
     def __init__(self, capacity):
@@ -77,8 +170,19 @@ class Agent:
         else:
             return np.argmax(self.currentNetwork.predictOne(state))
 
-    def observe(self, states, action, reward, newStates, done):
-        self.replayBuffer.add( (states, action, reward, newStates, done) )
+    def observe(self, state, action, reward, newState, done):
+        # calculate new sample error
+        states = np.array(state)
+        newStates = np.array(newStates)
+        currentPredictions = self.currentNetwork.predict(states)
+        newPredictions = self.currentNetwork.predict(newStates)   
+        target = reward
+        if not done:
+            target += self.GAMMA * np.amax(newPredictions)
+
+        error = abs(currentPredictions[action] - target)
+
+        self.replayBuffer.add((state, action, reward, newState, done), error )
         self.steps += 1
         self.epsilon = max(self.MIN_EPSILON, self.epsilon * self.EPSILON_DECAY_RATE)
 
@@ -99,6 +203,7 @@ class Agent:
         # Create list of xs and ys do train all of the batch items at once
         xs = np.zeros((self.BATCH_SIZE, self.currentNetwork.inputSize))
         ys = np.zeros((self.BATCH_SIZE, self.currentNetwork.outputSize))
+        errors = np.zeros(self.BATCH_SIZE)
 
         for i in range(self.BATCH_SIZE):
             state, action, reward, newState, done = batch[i]
@@ -108,9 +213,13 @@ class Agent:
 
             # Approximately map current Q to the target Q
             currentQs = currentPredictions[i]
+            oldQ = currentQs[action]
             currentQs[action] = target
             xs[i] = states[i] 
             ys[i] = currentQs
+
+            # get errors for PER
+            errors[i] = abs(oldQ - target)
 
         # update network / fit the model
         self.currentNetwork.train(xs, ys)
@@ -187,10 +296,10 @@ class CartPole(Environment):
 
 
 env = CartPole()
-replayBuffer = UniformReplayBuffer(2000)
+replayBuffer = PERReplayBuffer(100000)
 network = Network(0.001, env.stateSpaceSize, env.actionSpaceSize)
 agent = Agent(network, replayBuffer)
 
 env.run(agent, 2500)
 env.plot()
-env.save("results/dqn_scores.txt", "results/dqn_scores.png")
+env.save("results/dqn_per_scores.txt", "results/dqn_per_scores.png")
