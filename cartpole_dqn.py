@@ -4,7 +4,7 @@ from keras.layers import *
 from keras.optimizers import Adam
 import random
 import numpy as np
-    import gym
+import gym
 from collections import deque
 import matplotlib.pyplot as plt
 
