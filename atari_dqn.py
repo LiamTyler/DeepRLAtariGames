@@ -149,7 +149,7 @@ class Network:
         self.model = keras.models.load_model(path)
 
 class Agent:
-    def __init__(self, currentNet, tNetwork, buffer, gamma = 0.99, minEpsilon = 0.1, explorationFrames = 1000000, batchSize = 32, tau = 10000):
+    def __init__(self, currentNet, tNetwork, buffer, gamma = 0.99, minEpsilon = 0.1, explorationFrames = 1000000, batchSize = 32, tau = 1000):
         self.replayBuffer = buffer
         self.GAMMA = gamma
         self.MIN_EPSILON = minEpsilon
@@ -255,7 +255,6 @@ class Environment:
         f.write(str(self.scores)[1:-1] + '\n') # scores
         if agent:
             f.write(str(self.agent.steps) + '\n') # steps
-            self.agent.model.save(name + '.h5')
 
     def plot(self):
         plt.plot(list(range(len(self.scores)))[::2], self.scores[::2])
@@ -293,19 +292,26 @@ class Environment:
             while not done:
                 if render:
                     self.env.render()
-                    time.sleep(.3)
+                    time.sleep(.01)
                 
                 # select action
                 action = agent.selectAction(stateStack)
 
                 # execute that action
                 newState, reward, done, info = self.stepEnvironment(action)
-                if lives > info['ale.lives']:
-                    dead = True
-                    lives = info['ale.lives']
+                #if lives > info['ale.lives']:
+                #    dead = True
+                #    if done:
+                #        print('lost life, done = TRUE')
+                #    else:
+                #        print('lost life, done = FALSE')
+                #    lives = info['ale.lives']
+                #elif done:
+                #    print('just done')
+                #agent.observe(state, action, reward, newState, dead) # use dead, not done for breakout
                 
                 # store experience in replay memory
-                agent.observe(state, action, reward, newState, dead) # use dead, not done for breakout
+                agent.observe(state, action, reward, newState, done) # use dead, not done for breakout
                 agent.experienceReplay()
 
                 # observe reward and next state
@@ -326,8 +332,8 @@ class Environment:
                 if episode % 100 == 0:
                     print("Last 100 episode average:", sum(self.scores[-100:]) / 100)
                 if agent.steps % 1000:
-                    agent.currentNetwork.save("breakout_cnet.h5")
-                    agent.targetNetwork.save("breakout_tnet.h5")
+                    agent.currentNetwork.save("pong_cnet.h5")
+                    agent.targetNetwork.save("pong_tnet.h5")
 
 def run(env):
     for episode in range(10):
@@ -347,8 +353,8 @@ def run(env):
 
             state = newState
             
-env = Environment('BreakoutDeterministic-v4')
-replayBuffer = UniformReplayBuffer(600000)
+env = Environment('PongDeterministic-v4')
+replayBuffer = UniformReplayBuffer(750000)
 
 randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
 REPLAY_BUFFER_START_SIZE = 50000
@@ -357,9 +363,9 @@ while replayBuffer.size() < REPLAY_BUFFER_START_SIZE:
     print(replayBuffer.size() / REPLAY_BUFFER_START_SIZE)
 print("Replay Buffer Initialized")
 
-cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
-tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+cNetwork = Network(0.00006, env.stateSpaceShape, env.actionSpaceSize)
+tNetwork = Network(0.00006, env.stateSpaceShape, env.actionSpaceSize)
 agent = Agent(cNetwork, tNetwork, replayBuffer)
 
 env.run(agent, 10000000)
-env.fullSave('breakout_dqn')
+env.fullSave('pong_dqn')
