@@ -31,7 +31,7 @@ def huber_loss(y_true, y_pred):
     return K.mean(loss)
 
 from keras.backend.tensorflow_backend import set_session
-from keras import backend as be
+from keras import backend as K
 import tensorflow as tf
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
@@ -39,7 +39,7 @@ config.gpu_options.allow_growth = True  # dynamically grow the memory used on th
 sess = tf.Session(config=config)
 set_session(sess)  # set this TensorFlow session as the default session for Keras
 
-ATARI_SHAPE = (4, 105, 80)
+ATARI_SHAPE = (4, 80, 80)
 FRAMES_SKIPPED = 4
 
 # RingBuffer from https://becominghuman.ai/lets-build-an-atari-ai-part-1-dqn-df57e8ff3b26
@@ -135,8 +135,8 @@ class Network:
         model.add(Flatten())
         model.add(Dense(units=256, activation='relu', kernel_initializer=VarianceScaling(scale=2.0)))
         model.add(Dense(units=self.outputSize, activation='linear', kernel_initializer=VarianceScaling(scale=2.0)))
-        #model.compile(loss=huber_loss, optimizer=Adam(lr=self.learningRate))
-        model.compile(loss='mse', optimizer=Adam(lr=self.learningRate))
+        model.compile(loss=huber_loss, optimizer=Adam(lr=self.learningRate))
+        #model.compile(loss='mse', optimizer=Adam(lr=self.learningRate))
         return model
 
     def predict(self, xs):
@@ -174,11 +174,11 @@ class Agent:
         self.epsilon = 1
 
     def selectAction(self, state):
-        return random.randint(0, self.currentNetwork.outputSize - 1)
-        #if random.random() < self.epsilon:
-        #    return random.randint(0, self.currentNetwork.outputSize - 1)
-        #else:
-        #    return np.argmax(self.currentNetwork.predictOne(state))
+        #return random.randint(0, self.currentNetwork.outputSize - 1)
+        if random.random() < self.epsilon:
+            return random.randint(0, self.currentNetwork.outputSize - 1)
+        else:
+            return np.argmax(self.currentNetwork.predictOne(state))
 
     def updateTargetModel(self):
         self.targetNetwork.setWeights(self.currentNetwork)
@@ -189,8 +189,8 @@ class Agent:
         if self.steps <= self.EXPLORATION_FRAMES:
             self.epsilon = self.MIN_EPSILON + (1.0 - self.MIN_EPSILON) * (self.EXPLORATION_FRAMES - self.steps) / self.EXPLORATION_FRAMES
 
-        #if self.steps % self.TAU == 0:
-        #    self.updateTargetModel()
+        if self.steps % self.TAU == 0:
+            self.updateTargetModel()
 
     def experienceReplay(self):
         # sample random batch from replay memory
@@ -198,18 +198,17 @@ class Agent:
 
         # combine all of the BATCH_SIZE states and new states into two lists
         # to let keras do the predictions in two calls
-        states = np.array([x[0] for x in batch]).astype(np.float32) / 255.0
-        newStates = np.array([x[3] for x in batch]).astype(np.float32) / 255.0
+        states = np.array([x[0] for x in batch]).astype(np.float32)
+        newStates = np.array([x[3] for x in batch]).astype(np.float32)
         
-        #currentPredictions = self.currentNetwork.predict(states)
-        #newPredictions = self.targetNetwork.predict(newStates)
-        currentPredictions = np.zeros((self.BATCH_SIZE, 6))
-        newPredictions     = np.zeros((self.BATCH_SIZE, 6))
+        currentPredictions = self.currentNetwork.predict(states)
+        newPredictions = self.targetNetwork.predict(newStates)
+        #currentPredictions = np.zeros((self.BATCH_SIZE, 6))
+        #newPredictions     = np.zeros((self.BATCH_SIZE, 6))
         
         # Create list of xs and ys do train all of the batch items at once
         s = self.currentNetwork.inputShape
         xs = np.zeros((self.BATCH_SIZE, s[0], s[1], s[2]))
-        #ys = np.zeros((self.BATCH_SIZE, self.currentNetwork.outputSize))
 
         for i in range(self.BATCH_SIZE):
             _, action, reward, _, done = batch[i]
@@ -242,7 +241,6 @@ class RandomAgent:
     def experienceReplay(self):
         pass
 
-#stateStack = None
 class Environment:
     def __init__(self, name):
         self.name = name
@@ -282,8 +280,15 @@ class Environment:
         return self.processState(s)
 
     def processState(self, I):
-        I = I[::2, ::2]
-        return np.mean(I, axis=2).astype(np.uint8)
+        #I = I[35:195]
+        #I = I[::2, ::2]
+        #return np.mean(I, axis=2).astype(np.uint8)
+        I = I[35:195]
+        I = I[::2, ::2, 0]
+        I[I == 144] = 0
+        I[I == 109] = 0
+        I[I != 0] = 1
+        return I.astype(np.uint8)
 
     def stepEnvironment(self, action):
         newState, reward, done, info = self.env.step(action)
@@ -302,7 +307,7 @@ class Environment:
             score, lives = 0, 5
             state = self.processState(state)
             done = False
-            stateStack = np.array([state, state, state, state]).astype(np.float32) / 255.0
+            stateStack = np.array([state, state, state, state]).astype(np.float32)
             
             while not done:
                 if render:
@@ -315,25 +320,19 @@ class Environment:
                 # execute that action
                 newState, reward, done, info = self.stepEnvironment(action)
                 agent.observe(state, action, reward, newState, done) # use dead, not done for breakout
-                #if verbose and step % 1000 == 0:
-                #    print("Memory after observe:", get_mem_usage())
                 if train:
                     agent.experienceReplay()
-                    #if verbose and step % 1000 == 0:
-                    #    print("Memory after train  :", get_mem_usage())
 
                 # observe reward and next state
                 score += reward
                 state = newState
-                s = newState.astype(np.float32) / 255.0
+                s = newState.astype(np.float32)
                 shape = self.stateSpaceShape
                 stateStack = np.append(stateStack[1:], s.reshape((1, shape[1], shape[2])), axis=0)
 
                 step += 1
-                #if step % 10000 == 0:
-                #    #print("Memory before save  :", get_mem_usage())
-                #    self.fullSave('pong_dqn')
-                #    #print("Memory after save   :", get_mem_usage())
+                if step % 10000 == 0:
+                    self.fullSave('pong_dqn')
 
             episode += 1
             self.scores.append(score)
@@ -361,7 +360,7 @@ def run(env, episodes=1000):
             state = newState
         print("Memory:", get_mem_usage())
 
-REPLAY_SIZE = 7000 #UNDO
+REPLAY_SIZE = 500000 #UNDO
 load = False
 env = Environment('PongDeterministic-v4')
 replayBuffer = UniformReplayBuffer(REPLAY_SIZE)
@@ -395,9 +394,9 @@ if load:
     env.fullSave('pong_dqn')
 else:
     randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
-    REPLAY_BUFFER_START_SIZE = min(50000, REPLAY_SIZE)
+    REPLAY_BUFFER_START_SIZE = min(500000, REPLAY_SIZE)
     while replayBuffer.size() < REPLAY_BUFFER_START_SIZE:
-        env.run(randomAgent, 1000, False, False)
+        env.run(randomAgent, 10000, False, False)
         print(replayBuffer.size() / REPLAY_BUFFER_START_SIZE)
     print("Replay Buffer Initialized")
 
@@ -405,6 +404,5 @@ else:
     tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
     agent = Agent(cNetwork, tNetwork, replayBuffer)
 
-    #env.run(agent, 5000000)
     env.run(agent, 5000000)
     env.fullSave('pong_dqn')
