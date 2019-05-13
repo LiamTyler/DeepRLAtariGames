@@ -1,7 +1,7 @@
 import keras
 from keras.models import Sequential
-from keras.layers import *
-from keras.optimizers import *
+from keras.layers import Dense, Flatten, Conv2D
+from keras.optimizers import Adam
 from keras.initializers import VarianceScaling
 import random
 import numpy as np
@@ -10,12 +10,32 @@ import gym
 from collections import deque
 import matplotlib.pyplot as plt
 import time
+import gc
+import psutil
+import os
+
+def get_mem_usage():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss
+
+HUBER_LOSS_DELTA = 1.0
+def huber_loss(y_true, y_pred):
+    err = y_true - y_pred
+
+    cond = K.abs(err) < HUBER_LOSS_DELTA
+    L2 = 0.5 * K.square(err)
+    L1 = HUBER_LOSS_DELTA * (K.abs(err) - 0.5 * HUBER_LOSS_DELTA)
+
+    loss = tf.where(cond, L2, L1)
+
+    return K.mean(loss)
 
 from keras.backend.tensorflow_backend import set_session
+from keras import backend as be
 import tensorflow as tf
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
-config.log_device_placement = True  # to log device placement (on which device the operation ran)
+#config.log_device_placement = True  # to log device placement (on which device the operation ran)
 sess = tf.Session(config=config)
 set_session(sess)  # set this TensorFlow session as the default session for Keras
 
@@ -98,17 +118,6 @@ class UniformReplayBuffer:
 
         return batch
 
-HUBER_LOSS_DELTA = 1.0
-def huber_loss(y_true, y_pred):
-    err = y_true - y_pred
-
-    cond = K.abs(err) < HUBER_LOSS_DELTA
-    L2 = 0.5 * K.square(err)
-    L1 = HUBER_LOSS_DELTA * (K.abs(err) - 0.5 * HUBER_LOSS_DELTA)
-
-    loss = tf.where(cond, L2, L1)
-
-    return K.mean(loss)
 
 class Network:
     def __init__(self, learningRate, inputShape, outputSize):
@@ -126,7 +135,8 @@ class Network:
         model.add(Flatten())
         model.add(Dense(units=256, activation='relu', kernel_initializer=VarianceScaling(scale=2.0)))
         model.add(Dense(units=self.outputSize, activation='linear', kernel_initializer=VarianceScaling(scale=2.0)))
-        model.compile(loss=huber_loss, optimizer=Adam(lr=self.learningRate))
+        #model.compile(loss=huber_loss, optimizer=Adam(lr=self.learningRate))
+        model.compile(loss='mse', optimizer=Adam(lr=self.learningRate))
         return model
 
     def predict(self, xs):
@@ -146,7 +156,7 @@ class Network:
         self.model.save(path)
 
     def load(self, path):
-        self.model = keras.models.load_model(path)
+        self.model = keras.models.load_model(path, custom_objects={'huber_loss': huber_loss})
 
 class Agent:
     def __init__(self, currentNet, tNetwork, buffer, gamma = 0.99, minEpsilon = 0.1, explorationFrames = 1000000, batchSize = 32, tau = 1000):
@@ -164,10 +174,11 @@ class Agent:
         self.epsilon = 1
 
     def selectAction(self, state):
-        if random.random() < self.epsilon:
-            return random.randint(0, self.currentNetwork.outputSize - 1)
-        else:
-            return np.argmax(self.currentNetwork.predictOne(state))
+        return random.randint(0, self.currentNetwork.outputSize - 1)
+        #if random.random() < self.epsilon:
+        #    return random.randint(0, self.currentNetwork.outputSize - 1)
+        #else:
+        #    return np.argmax(self.currentNetwork.predictOne(state))
 
     def updateTargetModel(self):
         self.targetNetwork.setWeights(self.currentNetwork)
@@ -178,8 +189,8 @@ class Agent:
         if self.steps <= self.EXPLORATION_FRAMES:
             self.epsilon = self.MIN_EPSILON + (1.0 - self.MIN_EPSILON) * (self.EXPLORATION_FRAMES - self.steps) / self.EXPLORATION_FRAMES
 
-        if self.steps % self.TAU == 0:
-            self.updateTargetModel()
+        #if self.steps % self.TAU == 0:
+        #    self.updateTargetModel()
 
     def experienceReplay(self):
         # sample random batch from replay memory
@@ -190,8 +201,10 @@ class Agent:
         states = np.array([x[0] for x in batch]).astype(np.float32) / 255.0
         newStates = np.array([x[3] for x in batch]).astype(np.float32) / 255.0
         
-        currentPredictions = self.currentNetwork.predict(states)
-        newPredictions = self.targetNetwork.predict(newStates)
+        #currentPredictions = self.currentNetwork.predict(states)
+        #newPredictions = self.targetNetwork.predict(newStates)
+        currentPredictions = np.zeros((self.BATCH_SIZE, 6))
+        newPredictions     = np.zeros((self.BATCH_SIZE, 6))
         
         # Create list of xs and ys do train all of the batch items at once
         s = self.currentNetwork.inputShape
@@ -229,7 +242,7 @@ class RandomAgent:
     def experienceReplay(self):
         pass
 
-stateStack = None
+#stateStack = None
 class Environment:
     def __init__(self, name):
         self.name = name
@@ -250,11 +263,15 @@ class Environment:
 
     def fullSave(self, name):
         f = open(name + '.txt', 'w')
-        f.write(self.name + 'n') # env name
+        f.write(self.name + '\n') # env name
         f.write(str(len(self.scores)) + '\n') # number of episodes
         f.write(str(self.scores)[1:-1] + '\n') # scores
         if agent:
             f.write(str(self.agent.steps) + '\n') # steps
+            self.agent.currentNetwork.save(name + "_cnet.h5")
+            self.agent.targetNetwork.save(name + "_tnet.h5")
+
+        f.close()
 
     def plot(self):
         plt.plot(list(range(len(self.scores)))[::2], self.scores[::2])
@@ -274,8 +291,7 @@ class Environment:
         newState = self.processState(newState)
         return newState, reward, done, info
 
-    def run(self, agent, numSteps, verbose = True, render = False):
-        global stateStack
+    def run(self, agent, numSteps, verbose = True, render = False, train = True):
         self.agent = agent
         episode = 0
         step = 0
@@ -286,7 +302,6 @@ class Environment:
             score, lives = 0, 5
             state = self.processState(state)
             done = False
-            dead = False
             stateStack = np.array([state, state, state, state]).astype(np.float32) / 255.0
             
             while not done:
@@ -299,51 +314,43 @@ class Environment:
 
                 # execute that action
                 newState, reward, done, info = self.stepEnvironment(action)
-                #if lives > info['ale.lives']:
-                #    dead = True
-                #    if done:
-                #        print('lost life, done = TRUE')
-                #    else:
-                #        print('lost life, done = FALSE')
-                #    lives = info['ale.lives']
-                #elif done:
-                #    print('just done')
-                #agent.observe(state, action, reward, newState, dead) # use dead, not done for breakout
-                
-                # store experience in replay memory
                 agent.observe(state, action, reward, newState, done) # use dead, not done for breakout
-                agent.experienceReplay()
+                #if verbose and step % 1000 == 0:
+                #    print("Memory after observe:", get_mem_usage())
+                if train:
+                    agent.experienceReplay()
+                    #if verbose and step % 1000 == 0:
+                    #    print("Memory after train  :", get_mem_usage())
 
                 # observe reward and next state
                 score += reward
                 state = newState
                 s = newState.astype(np.float32) / 255.0
-                s = self.stateSpaceShape
-                stateStack = np.append(stateStack[1:], state.reshape((1, s[1], s[2])), axis=0)
+                shape = self.stateSpaceShape
+                stateStack = np.append(stateStack[1:], s.reshape((1, shape[1], shape[2])), axis=0)
 
-                if dead:
-                    dead = False
                 step += 1
+                #if step % 10000 == 0:
+                #    #print("Memory before save  :", get_mem_usage())
+                #    self.fullSave('pong_dqn')
+                #    #print("Memory after save   :", get_mem_usage())
 
             episode += 1
             self.scores.append(score)
             if verbose:
-                print("Episode:", episode, ", step:", agent.steps, ":", score)
+                print("Episode:", episode, "memory:", get_mem_usage(), ", step:", agent.steps, ":", score)
                 if episode % 100 == 0:
                     print("Last 100 episode average:", sum(self.scores[-100:]) / 100)
-                if agent.steps % 1000:
-                    agent.currentNetwork.save("pong_cnet.h5")
-                    agent.targetNetwork.save("pong_tnet.h5")
 
-def run(env):
-    for episode in range(10):
+def run(env, episodes=1000):
+    for episode in range(episodes):
         state = env.reset()
         score = 0  
         done = False
         
         while not done:
-            env.render()
-            time.sleep(.3)
+            #env.render()
+            #time.sleep(.3)
             
             # select action
             action = env.action_space.sample()
@@ -352,20 +359,52 @@ def run(env):
             newState, reward, done, info = env.step(action)
 
             state = newState
-            
+        print("Memory:", get_mem_usage())
+
+REPLAY_SIZE = 7000 #UNDO
+load = False
 env = Environment('PongDeterministic-v4')
-replayBuffer = UniformReplayBuffer(750000)
+replayBuffer = UniformReplayBuffer(REPLAY_SIZE)
+agent = None
+#run(env.env)
 
-randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
-REPLAY_BUFFER_START_SIZE = 50000
-while replayBuffer.size() < REPLAY_BUFFER_START_SIZE:
-    env.run(randomAgent, 1000, False, False)
-    print(replayBuffer.size() / REPLAY_BUFFER_START_SIZE)
-print("Replay Buffer Initialized")
+if load:
+    f = open('pong_dqn.txt')
+    lines = []
+    for l in f.readlines():
+        lines.append(l)
+    ts = lines[2].strip()
+    ts = ts.split(',')
+    env.scores = [float(x.strip()) for x in ts]
+    steps = int(lines[3].strip())
 
-cNetwork = Network(0.00006, env.stateSpaceShape, env.actionSpaceSize)
-tNetwork = Network(0.00006, env.stateSpaceShape, env.actionSpaceSize)
-agent = Agent(cNetwork, tNetwork, replayBuffer)
+    cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+    cNetwork.load("pong_dqn_cnet.h5")
+    tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+    tNetwork.load("pong_dqn_tnet.h5")
+    agent = Agent(cNetwork, tNetwork, replayBuffer)
 
-env.run(agent, 10000000)
-env.fullSave('pong_dqn')
+    randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
+    while replayBuffer.size() < REPLAY_SIZE:
+        env.run(randomAgent, 7000, False, False, False)
+        print(replayBuffer.size() / REPLAY_SIZE)
+    print("Replay Buffer Initialized")
+
+    agent.steps = steps
+    env.run(agent, 5000000 - steps)
+    env.fullSave('pong_dqn')
+else:
+    randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
+    REPLAY_BUFFER_START_SIZE = min(50000, REPLAY_SIZE)
+    while replayBuffer.size() < REPLAY_BUFFER_START_SIZE:
+        env.run(randomAgent, 1000, False, False)
+        print(replayBuffer.size() / REPLAY_BUFFER_START_SIZE)
+    print("Replay Buffer Initialized")
+
+    cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+    tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+    agent = Agent(cNetwork, tNetwork, replayBuffer)
+
+    #env.run(agent, 5000000)
+    env.run(agent, 5000000)
+    env.fullSave('pong_dqn')
