@@ -341,6 +341,42 @@ class Environment:
                 if episode % 100 == 0:
                     print("Last 100 episode average:", sum(self.scores[-100:]) / 100)
 
+
+    def evaluate(self, agent, episodes=100, verbose=True, render=False):
+        evalScores = [0.0] * episodes
+        agent.epsilon = 0
+        for episode in range(episodes):
+            state = self.processState(self.env.reset())
+            done = False
+            score = 0
+            stateStack = np.array([state, state, state, state]).astype(np.float32)
+            
+            while not done:
+                if render:
+                    self.env.render()
+                    time.sleep(.01)
+                
+                # select action
+                action = agent.selectAction(stateStack)
+
+                # execute that action
+                newState, reward, done, info = self.stepEnvironment(action)
+
+                # observe reward and next state
+                score += reward
+                state = newState
+                s = newState.astype(np.float32)
+                shape = self.stateSpaceShape
+                stateStack = np.append(stateStack[1:], s.reshape((1, shape[1], shape[2])), axis=0)
+
+            evalScores.append(score)
+            if verbose:
+                print("Episode:", episode, ":", score)
+
+        print("average evalscore =", sum(evalScores) / evalScores)
+        return evalScores
+
+
 def run(env, episodes=1000):
     for episode in range(episodes):
         state = env.reset()
@@ -360,49 +396,60 @@ def run(env, episodes=1000):
             state = newState
         print("Memory:", get_mem_usage())
 
+
 REPLAY_SIZE = 500000 #UNDO
 load = False
+eval = True
 env = Environment('PongDeterministic-v4')
 replayBuffer = UniformReplayBuffer(REPLAY_SIZE)
 agent = None
 #run(env.env)
+evalScores = []
 
-if load:
-    f = open('pong_dqn.txt')
-    lines = []
-    for l in f.readlines():
-        lines.append(l)
-    ts = lines[2].strip()
-    ts = ts.split(',')
-    env.scores = [float(x.strip()) for x in ts]
-    steps = int(lines[3].strip())
-
+if eval:
     cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
     cNetwork.load("pong_dqn_cnet.h5")
     tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
     tNetwork.load("pong_dqn_tnet.h5")
     agent = Agent(cNetwork, tNetwork, replayBuffer)
-
-    randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
-    while replayBuffer.size() < REPLAY_SIZE:
-        env.run(randomAgent, 7000, False, False, False)
-        print(replayBuffer.size() / REPLAY_SIZE)
-    print("Replay Buffer Initialized")
-
-    agent.steps = steps
-    env.run(agent, 5000000 - steps)
-    env.fullSave('pong_dqn')
+    evalScores = env.evaluate(agent)
 else:
-    randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
-    REPLAY_BUFFER_START_SIZE = min(500000, REPLAY_SIZE)
-    while replayBuffer.size() < REPLAY_BUFFER_START_SIZE:
-        env.run(randomAgent, 10000, False, False)
-        print(replayBuffer.size() / REPLAY_BUFFER_START_SIZE)
-    print("Replay Buffer Initialized")
+    if load:
+        f = open('pong_dqn.txt')
+        lines = []
+        for l in f.readlines():
+            lines.append(l)
+        ts = lines[2].strip()
+        ts = ts.split(',')
+        env.scores = [float(x.strip()) for x in ts]
+        steps = int(lines[3].strip())
 
-    cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
-    tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
-    agent = Agent(cNetwork, tNetwork, replayBuffer)
+        cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+        cNetwork.load("pong_dqn_cnet.h5")
+        tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+        tNetwork.load("pong_dqn_tnet.h5")
+        agent = Agent(cNetwork, tNetwork, replayBuffer)
 
-    env.run(agent, 5000000)
-    env.fullSave('pong_dqn')
+        randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
+        while replayBuffer.size() < REPLAY_SIZE:
+            env.run(randomAgent, 7000, False, False, False)
+            print(replayBuffer.size() / REPLAY_SIZE)
+        print("Replay Buffer Initialized")
+
+        agent.steps = steps
+        env.run(agent, 5000000 - steps)
+        env.fullSave('pong_dqn')
+    else:
+        randomAgent = RandomAgent(replayBuffer, env.actionSpaceSize)
+        REPLAY_BUFFER_START_SIZE = min(500000, REPLAY_SIZE)
+        while replayBuffer.size() < REPLAY_BUFFER_START_SIZE:
+            env.run(randomAgent, 10000, False, False)
+            print(replayBuffer.size() / REPLAY_BUFFER_START_SIZE)
+        print("Replay Buffer Initialized")
+
+        cNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+        tNetwork = Network(0.00001, env.stateSpaceShape, env.actionSpaceSize)
+        agent = Agent(cNetwork, tNetwork, replayBuffer)
+
+        env.run(agent, 5000000)
+        env.fullSave('pong_dqn')
